@@ -40,6 +40,33 @@ for t in result.traces:        # 全量审计轨迹：成败 / 耗时 / 错误
 
 单个 Agent 崩溃（API 超时 / 限流 / 解析失败）不会炸掉整批：它被收割为 `error` Trace，幸存者照常聚合。零成功才抛 `NoValidReportsError`；开启 `require_all=True` 则批次不完整即抛 `IncompleteBatchError`（对账 / 合规场景）。
 
+## 真实模型实测
+
+`examples/resume_panel.py` 用三位专家并行评审一份简历，聚合器（也是一次 LLM 调用）合成终审报告。适配层是 **40 行纯 stdlib**（`examples/llm_backend.py`），任何 OpenAI 兼容服务即插即用：
+
+```bash
+export CONCLAVE_LLM_API_KEY=sk-xxx          # 也可用 DEEPSEEK_API_KEY 等厂商变量
+python examples/resume_panel.py --live       # 默认离线剧本模式，--live 才调真实模型
+```
+
+以下为 deepseek-chat 的真实运行输出（三位专家只拿到「简历全文 + 自己的角色设定」，D1 零互知；3 专家并行 + 1 聚合，共 4 次调用约 12 秒）：
+
+<picture>
+  <source media="(prefers-color-scheme: light)" srcset="docs/demo-live.png">
+  <img src="docs/demo-live.png" width="860" alt="真实模型运行：三位专家并行评审简历并聚合终审报告">
+</picture>
+
+### 故障注入：一位专家当场崩溃，评审照常完成
+
+<picture>
+  <source media="(prefers-color-scheme: light)" srcset="docs/demo-degraded.png">
+  <img src="docs/demo-degraded.png" width="860" alt="故障注入：一位专家崩溃被收割为 error Trace，幸存者照常聚合">
+</picture>
+
+`--inject-failure Clarity` 让 Clarity 专家直接抛出 RuntimeError（模拟 API 503 / 限流）。结果：它被收割为 `error` Trace（红色行，错误消息完整保留在审计轨迹里），幸存的两位专家照常评审、聚合器照常出终审报告——**总耗时几乎不变**（12.0s vs 11.7s），因为三个专家本来就在并行。
+
+一个值得注意的细节：**聚合器只拿到幸存报告，它无从得知有谁缺席**。适配层因此显式告知了实际份数，避免模型臆测出缺席者的观点；而如果你的场景要求「专家必须到齐」，那是 `require_all=True` 门（D3）的职责——完整性校验放在机制层，而不是提示词层。
+
 ## 架构
 
 ```
@@ -105,9 +132,9 @@ CI 在 Python 3.10 / 3.12 / 3.13 三版本矩阵上跑同一套测试。
 
 - [x] 核心引擎：并行隔离 + 三道门 + 批次超时（v0.1.0）
 - [x] 断路器：跨批次失败记忆
+- [x] 示例应用：AI 简历评审面板（真实模型实测，见上文截图）
 - [ ] DAG 任务编排：拓扑分波、波间交付物传递（v0.2）
 - [ ] RAG 混合检索：多通道召回 + RRF 融合（v0.3）
-- [ ] 示例应用：AI 简历评审面板（多专家并行评审 → 聚合报告）
 
 ## License
 
