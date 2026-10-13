@@ -1,5 +1,10 @@
 # Conclave
 
+![tests](https://github.com/uppermost777/conclave/actions/workflows/tests.yml/badge.svg)
+![python](https://img.shields.io/badge/python-3.10%2B-blue)
+![deps](https://img.shields.io/badge/runtime%20deps-0-brightgreen)
+![license](https://img.shields.io/badge/license-MIT-green)
+
 **并行隔离多智能体执行引擎** —— Agent 彼此隔离、并行独立执行，产出聚合后才揭晓。运行时零第三方依赖（纯 stdlib）。
 
 > 命名典故：教皇选举（conclave）——枢机们彼此隔离、独立投票，选票聚合后才公布结果；黑烟 = 零有效票（门 1），白烟 = 聚合完成。
@@ -93,6 +98,8 @@ for t in result.traces:        # 全量审计轨迹：成败 / 耗时 / 错误
 ```bash
 pip install -e ".[dev]" && pytest -v
 ```
+
+CI 在 Python 3.10 / 3.12 / 3.13 三版本矩阵上跑同一套测试。
 
 ## Roadmap
 
