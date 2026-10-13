@@ -1,0 +1,21 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "conclave"
+version = "0.1.0"
+description = "并行隔离多智能体执行引擎：零互知、三道容错门、可注入时钟的确定性测试"
+readme = "README.md"
+requires-python = ">=3.10"
+# 设计红线：运行时零第三方依赖（D0）——编排层不绑定任何厂商 SDK
+dependencies = []
+
+[project.optional-dependencies]
+dev = ["pytest>=8"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
