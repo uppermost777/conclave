@@ -1,13 +1,40 @@
 # Conclave
 
 ![tests](https://github.com/uppermost777/conclave/actions/workflows/tests.yml/badge.svg)
+
 ![python](https://img.shields.io/badge/python-3.10%2B-blue)
+
 ![deps](https://img.shields.io/badge/runtime%20deps-0-brightgreen)
+
 ![license](https://img.shields.io/badge/license-MIT-green)
 
 **并行隔离多智能体执行引擎** —— Agent 彼此隔离、并行独立执行，产出聚合后才揭晓。运行时零第三方依赖（纯 stdlib）。
 
 > 命名典故：教皇选举（conclave）——枢机们彼此隔离、独立投票，选票聚合后才公布结果；黑烟 = 零有效票（门 1），白烟 = 聚合完成。
+
+## 关于这个项目
+
+这是一个**学习性重实现（reimplementation study）**项目。想真正理解一个生产级多智能体编排框架是如何处理并发隔离与容错的，光读它不够——于是我把核心机制亲手重写了一遍。
+
+- **架构参考**：[Octochains](https://github.com/ahmadvh/octochains) v0.7.0。核心概念（并行隔离 / 零互知、门 1 / 门 2、断路器）源自该项目。
+- **代码**：本仓库的引擎、断路器、测试均为**独立编写**——接口、数据结构与实现细节重新设计，未复制原项目源码（差异见下）。
+- **本人的额外工作**：纯 stdlib 的 LLM 适配层（`examples/llm_backend.py`）、故障注入示例与真实模型实测、终端截图渲染管线。
+- **许可说明**：原项目采用 BUSL-1.1；本仓库仅作学习与研究用途，代码为独立实现，采用 MIT。
+
+### 与原项目的主要差异
+
+| 维度      | Octochains（参考）                          | Conclave（本仓库）                        |
+| ------- | -------------------------------------- | ------------------------------------ |
+| Agent 契约 | `ABC` 抽象基类，需继承                         | `Protocol` 鸭子类型，任意对象可接入              |
+| Engine 形态 | 有状态：`__init__(agents, aggregator)`      | 无状态：`run(agents, prompt, ...)`       |
+| 审计记录    | `Trace(agent_role, error_message, ...)` | `Trace(role, error, duration_ms)`    |
+| 聚合器     | `Aggregator` 基类 + `execute()`           | callable `(prompt, reports) -> str`  |
+| 数据模型    | pydantic                               | dataclass（强校验交给边界层）                  |
+| 断路器     | 有                                      | 有，且**时钟可注入**（确定性测试，冷却期零等待）           |
+| 门语义     | `require_all_agents` 一个开关             | 显式区分「门 1 零成功」与「门 2 完整性」，各自独立可配       |
+| 真实模型示例  | 以文档为主                                  | 附 40 行 stdlib 适配层 + 端到端实测截图          |
+
+> 以上差异均为本人重实现时的主动设计调整；相同之处（如零互知、两道门）是本项目**借鉴**的核心理念，已在此明确说明。
 
 ## 为什么需要它
 
@@ -51,16 +78,16 @@ python examples/resume_panel.py --live       # 默认离线剧本模式，--live
 
 以下为 deepseek-chat 的真实运行输出（三位专家只拿到「简历全文 + 自己的角色设定」，D1 零互知；3 专家并行 + 1 聚合，共 4 次调用约 12 秒）：
 
-<picture>
-  <source media="(prefers-color-scheme: light)" srcset="docs/demo-live.png">
-  <img src="docs/demo-live.png" width="860" alt="真实模型运行：三位专家并行评审简历并聚合终审报告">
+<picture>  
+  <source media="(prefers-color-scheme: light)" srcset="docs/demo-live.png">  
+  <img src="docs/demo-live.png" width="860" alt="真实模型运行：三位专家并行评审简历并聚合终审报告">  
 </picture>
 
 ### 故障注入：一位专家当场崩溃，评审照常完成
 
-<picture>
-  <source media="(prefers-color-scheme: light)" srcset="docs/demo-degraded.png">
-  <img src="docs/demo-degraded.png" width="860" alt="故障注入：一位专家崩溃被收割为 error Trace，幸存者照常聚合">
+<picture>  
+  <source media="(prefers-color-scheme: light)" srcset="docs/demo-degraded.png">  
+  <img src="docs/demo-degraded.png" width="860" alt="故障注入：一位专家崩溃被收割为 error Trace，幸存者照常聚合">  
 </picture>
 
 `--inject-failure Clarity` 让 Clarity 专家直接抛出 RuntimeError（模拟 API 503 / 限流）。结果：它被收割为 `error` Trace（红色行，错误消息完整保留在审计轨迹里），幸存的两位专家照常评审、聚合器照常出终审报告——**总耗时几乎不变**（12.0s vs 11.7s），因为三个专家本来就在并行。
@@ -93,18 +120,18 @@ python examples/resume_panel.py --live       # 默认离线剧本模式，--live
 
 ## 设计决策
 
-| #  | 决策 | 理由 |
-|----|------|------|
-| D0 | 运行时零依赖 | 编排层不绑定任何厂商 SDK；LLM 适配留给调用方 |
-| D1 | 零互知 | 独立性靠机制保证：Agent 看不到同伴，杜绝趋同与认知隧道 |
-| D2 | 异常即数据 | 子任务异常被收割为 error Trace；审计完整性优先于成功率 |
-| D3 | 两道可配置的门 | 零成功→快速失败；`require_all`→完整性场景才启用 |
-| D4 | 手动管理 executor | `with` 语句会阻塞至全部 future 完成，超时语义形同虚设 |
-| D5 | `time.monotonic()` | 墙上时钟会被 NTP 回拨，测耗时必须单调时钟 |
+| #  | 决策                    | 理由                                       |
+| -- | --------------------- | ---------------------------------------- |
+| D0 | 运行时零依赖                | 编排层不绑定任何厂商 SDK；LLM 适配留给调用方               |
+| D1 | 零互知                   | 独立性靠机制保证：Agent 看不到同伴，杜绝趋同与认知隧道           |
+| D2 | 异常即数据                 | 子任务异常被收割为 error Trace；审计完整性优先于成功率        |
+| D3 | 两道可配置的门               | 零成功→快速失败；`require_all`→完整性场景才启用          |
+| D4 | 手动管理 executor         | `with` 语句会阻塞至全部 future 完成，超时语义形同虚设       |
+| D5 | `time.monotonic()`    | 墙上时钟会被 NTP 回拨，测耗时必须单调时钟                  |
 | D6 | Aggregator 是 callable | 聚合策略不设基类，`(prompt, reports) -> str` 即可接入 |
-| D7 | dataclass 而非 pydantic | 核心数据只是审计记录；强校验是边界层职责 |
-| D8 | 断路器可注入时钟 | 测试零等待推进冷却期，确定性测试不靠睡眠 |
-| D9 | Agent 是 Protocol | 鸭子类型契约，测试替身与真实适配器同构 |
+| D7 | dataclass 而非 pydantic | 核心数据只是审计记录；强校验是边界层职责                     |
+| D8 | 断路器可注入时钟              | 测试零等待推进冷却期，确定性测试不靠睡眠                     |
+| D9 | Agent 是 Protocol      | 鸭子类型契约，测试替身与真实适配器同构                      |
 
 配套的 `breaker.CircuitBreaker` 提供**跨批次**失败记忆：`CLOSED → OPEN → HALF_OPEN → CLOSED/OPEN`，上游 API 持续故障时快速失败、冷却后小流量探测，避免每批都付出完整超时成本。
 
@@ -112,15 +139,15 @@ python examples/resume_panel.py --live       # 默认离线剧本模式，--live
 
 测试套件本身就是容错行为的可执行文档（全部离线，零网络）：
 
-| 测试 | 验证的失败路径 |
-|------|----------------|
-| `test_single_failure_degrades_to_partial` | 1 个 Agent 崩溃 → 部分降级，幸存者照常聚合 |
-| `test_all_fail_raises_no_valid_reports` | 全体崩溃 → 门 1 快速失败，异常自带审计现场 |
-| `test_aggregator_never_sees_empty_batch` | 零成功时聚合器绝不被调用（防幻觉聚合） |
-| `test_incomplete_batch_raises_with_roster` | 门 2：异常消息同时列出成功/失败名单 |
-| `test_prompt_contains_no_peer_knowledge` | D1：断言同伴名字从未出现在 prompt 中 |
-| `test_slow_agent_harvested_as_timeout` | D4：慢 Agent 被收割为 timeout error |
-| `test_open_blocks_until_cooldown` 等 | 断路器四条状态转移，假时钟零等待 |
+| 测试                                         | 验证的失败路径                       |
+| ------------------------------------------ | ----------------------------- |
+| `test_single_failure_degrades_to_partial`  | 1 个 Agent 崩溃 → 部分降级，幸存者照常聚合   |
+| `test_all_fail_raises_no_valid_reports`    | 全体崩溃 → 门 1 快速失败，异常自带审计现场      |
+| `test_aggregator_never_sees_empty_batch`   | 零成功时聚合器绝不被调用（防幻觉聚合）           |
+| `test_incomplete_batch_raises_with_roster` | 门 2：异常消息同时列出成功/失败名单           |
+| `test_prompt_contains_no_peer_knowledge`   | D1：断言同伴名字从未出现在 prompt 中       |
+| `test_slow_agent_harvested_as_timeout`     | D4：慢 Agent 被收割为 timeout error |
+| `test_open_blocks_until_cooldown` 等        | 断路器四条状态转移，假时钟零等待              |
 
 ```bash
 pip install -e ".[dev]" && pytest -v
@@ -138,4 +165,4 @@ CI 在 Python 3.10 / 3.12 / 3.13 三版本矩阵上跑同一套测试。
 
 ## License
 
-MIT
+本仓库代码采用 MIT。核心概念与架构参考自 [Octochains](https://github.com/ahmadvh/octochains)（作者 Ahmad Varasteh，BUSL-1.1）；本项目为学习与研究用途的独立实现，未使用其源码，亦与其作者无隶属关系。
